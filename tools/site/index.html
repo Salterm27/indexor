@@ -4,60 +4,97 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Index</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1 id="title">Index</h1>
-  <p id="description"></p>
-  <div class="barra">
-    <input id="search" type="search" placeholder="Search repositories…" aria-label="Search">
-    <a id="submit" class="button" hidden>Submit a repository</a>
+<header class="masthead">
+  <div>
+    <h1 id="title">Index</h1>
+    <p id="description" class="lede"></p>
   </div>
-  <nav id="toc" aria-label="Sections"></nav>
+  <a id="add" class="add" hidden>
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    Add a repository
+  </a>
 </header>
-<main id="sections"></main>
+
+<div class="layout">
+  <aside>
+    <label class="search">
+      <span class="sr">Search repositories</span>
+      <input id="search" type="search" placeholder="Search" autocomplete="off">
+    </label>
+    <nav id="toc" aria-label="Sections"></nav>
+  </aside>
+  <main id="sections"></main>
+</div>
+
 <script>
+const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
   const n = Object.assign(document.createElement(tag), props);
   n.append(...children);
   return n;
 };
+// Text with the search term wrapped in <mark>, built from text nodes only.
+const marked = (text, term) => {
+  const out = document.createDocumentFragment();
+  const low = text.toLowerCase();
+  let i = 0, at;
+  while (term && (at = low.indexOf(term, i)) !== -1) {
+    out.append(text.slice(i, at), el("mark", { textContent: text.slice(at, at + term.length) }));
+    i = at + term.length;
+  }
+  out.append(text.slice(i));
+  return out;
+};
+
 fetch("index.json").then(r => r.json()).then(d => {
   document.title = d.title;
-  document.getElementById("title").textContent = d.title;
-  document.getElementById("description").textContent = d.description;
-  if (d.repo) {
-    const a = document.getElementById("submit");
-    a.href = `https://github.com/${d.repo}/issues/new?template=submission.yml`;
-    a.hidden = false;
-  }
-  const toc = document.getElementById("toc"), main = document.getElementById("sections");
-  const paint = filter => {
+  $("title").textContent = d.title;
+  $("description").textContent = d.description;
+  const addUrl = d.repo ? `https://github.com/${d.repo}/issues/new?template=submission.yml` : "";
+  if (addUrl) { $("add").href = addUrl; $("add").hidden = false; }
+
+  const paint = term => {
+    const toc = $("toc"), main = $("sections");
     toc.replaceChildren(); main.replaceChildren();
+    let shown = 0;
     for (const s of d.sections) {
-      const items = d.entries
-        .filter(e => e.section === s.id)
-        .filter(e => (e.name + " " + e.description + " " + e.owner).toLowerCase().includes(filter))
+      const all = d.entries.filter(e => e.section === s.id);
+      const items = all
+        .filter(e => `${e.name} ${e.description} ${e.owner}`.toLowerCase().includes(term))
         .sort((a, b) => a.name.localeCompare(b.name));
-      toc.append(el("a", { href: "#" + s.id, textContent: `${s.name} (${items.length})` }));
+      shown += items.length;
+      toc.append(el("a", { href: "#" + s.id, className: items.length ? "" : "empty" },
+        el("span", { textContent: s.name }), el("span", { className: "count", textContent: items.length })));
+      if (term && !items.length) continue;
+
       const sec = el("section", { id: s.id }, el("h2", { textContent: s.name }));
-      if (s.description) sec.append(el("p", { className: "muted", textContent: s.description }));
-      if (!items.length) sec.append(el("p", { className: "muted", textContent: "No repositories." }));
-      const ul = el("ul");
+      if (s.description) sec.append(el("p", { className: "about", textContent: s.description }));
+      if (!all.length) {
+        const p = el("p", { className: "none", textContent: "Nothing here yet. " });
+        if (addUrl) p.append(el("a", { href: addUrl, textContent: "Add the first one" }), ".");
+        sec.append(p);
+      }
+      const ol = el("ol");
       for (const e of items) {
         // Only https URLs are linked: the content comes from third-party issues.
-        const a = el("a", { textContent: e.name, rel: "noopener" });
+        const a = el("a", { rel: "noopener" }, marked(e.name, term));
         if (/^https:\/\//.test(e.url)) a.href = e.url;
-        const li = el("li", {}, a, el("p", { textContent: e.description }));
-        if (e.owner) li.append(el("span", { className: "muted", textContent: e.owner }));
-        ul.append(li);
+        const row = el("div", { className: "row" }, a, el("span", { className: "leader" }));
+        if (e.owner) row.append(el("span", { className: "owner" }, marked(e.owner, term)));
+        ol.append(el("li", {}, row, el("p", {}, marked(e.description, term))));
       }
-      sec.append(ul); main.append(sec);
+      sec.append(ol); main.append(sec);
     }
+    if (term && !shown) main.append(el("p", { className: "none", textContent: `No repositories match “${term}”.` }));
   };
   paint("");
-  document.getElementById("search").addEventListener("input", ev => paint(ev.target.value.trim().toLowerCase()));
+  $("search").addEventListener("input", ev => paint(ev.target.value.trim().toLowerCase()));
 });
 </script>
 </body>
