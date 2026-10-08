@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """indexor — manage a curated index of repositories (no dependencies).
 
-The index lives in data/entries.json and is published as a Markdown file with
-a table of contents and sections. New entries are submitted as issues and get
-published when an approver accepts them. See README.md.
+The index lives in data/entries/ (one file per entry) and is published as a
+Markdown file with
+a table of contents and sections. New entries are submitted as issues; each
+valid submission becomes a pull request and is published when it is merged.
+See README.md.
 """
-import argparse, datetime, json, os, re, shutil, sys
+import argparse, datetime, glob, json, os, re, shutil, sys
 from urllib.parse import urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "indexor.config.json")
-DATA = os.path.join(ROOT, "data", "entries.json")
+ENTRIES = os.path.join(ROOT, "data", "entries")
 TEMPLATE = os.path.join(ROOT, ".github", "ISSUE_TEMPLATE", "submission.yml")
 SITE = os.path.join(ROOT, "tools", "site")
 
@@ -23,7 +25,6 @@ FIELDS = {
     "owner": "Owner",
 }
 MAX = {"name": 60, "description": 200, "owner": 60}
-APPROVER_ROLES = {"admin", "maintain"}
 
 
 def load(path):
@@ -37,8 +38,14 @@ def write(path, text):
         f.write(text)
 
 
-def save_entries(entries):
-    write(DATA, json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
+def load_entries():
+    """Every entry is its own file, so parallel submissions never conflict."""
+    return [load(f) for f in sorted(glob.glob(os.path.join(ENTRIES, "*.json")))]
+
+
+def save_entry(e):
+    slug = re.sub(r"[^a-z0-9]+", "-", e["url"].lower().split("://", 1)[-1]).strip("-")
+    write(os.path.join(ENTRIES, slug + ".json"), json.dumps(e, ensure_ascii=False, indent=2) + "\n")
 
 
 def one_line(text):
@@ -139,8 +146,11 @@ def issue_fields(body):
 
 
 def entry_from_issue(event, cfg):
-    """Return the entry proposed by the issue, or None if it is not a submission."""
-    issue = event["issue"]
+    """Return the entry proposed by the issue, or None if it is not a submission.
+
+    Accepts a webhook event or a bare issue object from the API.
+    """
+    issue = event.get("issue", event)
     fields = issue_fields(issue.get("body"))
     if FIELDS["url"] not in fields or FIELDS["section"] not in fields:
         return None
@@ -154,6 +164,7 @@ def entry_from_issue(event, cfg):
         "owner": one_line(fields.get(FIELDS["owner"])),
         "submitted_by": issue["user"]["login"],
         "issue": issue["number"],
+        "date": (issue.get("created_at") or datetime.date.today().isoformat())[:10],
     }
 
 
@@ -170,9 +181,12 @@ def summary(e, cfg):
 
 
 def cmd_review(a):
-    """Validate a submission issue. Prints: unrelated | valid | invalid."""
-    cfg, entries = load(CONFIG), load(DATA)
-    e = entry_from_issue(load(a.event), cfg)
+    """Validate a submission issue. Prints: unrelated | valid | invalid.
+
+    With --write, a valid entry is also added and the index regenerated.
+    """
+    cfg, entries = load(CONFIG), load_entries()
+    e = entry_from_issue(load(a.issue), cfg)
     if e is None:
         print("unrelated"); return 0
     errors = validate_entry(e, cfg, entries)
@@ -182,42 +196,22 @@ def cmd_review(a):
                   + "\n\nEdit the issue to fix it: it is validated again automatically.\n")
     else:
         report = ("### ✅ Valid submission\n\n" + summary(e, cfg)
-                  + "\n\nWaiting for an approver. Once an authorised person adds the `approved` label, "
-                    "the entry is published to the index and this issue is closed.\n")
+                  + "\n\nA pull request with this entry is open. The entry is published when a "
+                    "maintainer merges it, and this issue is closed.\n")
+        if a.write:
+            save_entry(e)
+            generate(cfg, entries + [e])
     if a.report:
         write(a.report, report)
     print("invalid" if errors else "valid")
     return 0
 
 
-def cmd_publish(a):
-    """Add the approved issue's entry to the index and regenerate the .md."""
-    cfg, entries = load(CONFIG), load(DATA)
-    e = entry_from_issue(load(a.event), cfg)
-    errors = ["The issue does not use the submission form."] if e is None else validate_entry(e, cfg, entries)
-    if errors:
-        if a.report:
-            write(a.report, "### ❌ Could not publish\n\n" + "\n".join(f"- {x}" for x in errors) + "\n")
-        print("\n".join(errors), file=sys.stderr)
-        return 1
-    e["approved_by"] = a.approver
-    e["date"] = datetime.date.today().isoformat()
-    entries.append(e)
-    save_entries(entries)
-    generate(cfg, entries)
-    if a.report:
-        write(a.report, f"### 🚀 Published\n\n**{quiet(e['name'])}** is now in the "
-                        f"[index](../blob/HEAD/{cfg['output']}). Approved by @{a.approver}.\n")
-    print(f"Published: {e['name']} ({e['url']})")
+def cmd_title(a):
+    """Print the pull request title for a submission issue."""
+    e = entry_from_issue(load(a.issue), load(CONFIG))
+    print(f"Add {quiet(e['name'])} to the index")
     return 0
-
-
-def cmd_authorized(a):
-    """Exit 0 if the user may approve submissions."""
-    allow = [x.lower() for x in load(CONFIG).get("approvers") or []]
-    ok = a.user.lower() in allow if allow else a.role in APPROVER_ROLES
-    print("yes" if ok else "no")
-    return 0 if ok else 1
 
 
 # ---------------------------------------------------------------- generation
@@ -270,7 +264,7 @@ labels: [submission]
 body:
   - type: markdown
     attributes:
-      value: Fill in the form. It is validated automatically and published once an approver accepts it.
+      value: Fill in the form. It is validated automatically and published once a maintainer merges it.
   - type: input
     id: name
     attributes:
@@ -310,7 +304,7 @@ body:
 
 def cmd_build(a):
     cfg = load(CONFIG)
-    generate(cfg, load(DATA))
+    generate(cfg, load_entries())
     write(TEMPLATE, render_template(cfg))
     print(f"Generated {cfg['output']} and .github/ISSUE_TEMPLATE/submission.yml")
     return 0
@@ -319,7 +313,7 @@ def cmd_build(a):
 def cmd_lint(a):
     cfg = load(CONFIG)
     errors = validate_config(cfg)
-    entries = load(DATA) if not errors else []
+    entries = load_entries() if not errors else []
     for i, e in enumerate(entries):
         errors += [f"entry {i + 1} ({e.get('name')!r}): {x}"
                    for x in validate_entry(e, cfg, entries[:i])]
@@ -337,22 +331,21 @@ def cmd_lint(a):
 
 
 def cmd_add(a):
-    cfg, entries = load(CONFIG), load(DATA)
+    cfg, entries = load(CONFIG), load_entries()
     e = {"name": one_line(a.name), "url": normalize_url(a.url), "section": a.section,
          "description": one_line(a.description), "owner": one_line(a.owner),
          "date": datetime.date.today().isoformat()}
     errors = validate_entry(e, cfg, entries)
     if errors:
         print("\n".join(errors), file=sys.stderr); return 1
-    entries.append(e)
-    save_entries(entries)
-    generate(cfg, entries)
+    save_entry(e)
+    generate(cfg, entries + [e])
     print(f"Added: {e['name']}")
     return 0
 
 
 def cmd_site(a):
-    cfg, entries = load(CONFIG), load(DATA)
+    cfg, entries = load(CONFIG), load_entries()
     dest = os.path.abspath(a.dest)
     shutil.copytree(SITE, dest, dirs_exist_ok=True)
     public = {"title": cfg["title"], "description": cfg.get("description", ""),
@@ -378,12 +371,10 @@ def main():
     s = sub.add_parser("site", help="generate the static site")
     s.add_argument("dest", nargs="?", default="_site"); s.set_defaults(f=cmd_site)
     s = sub.add_parser("review", help="(CI) validate a submission issue")
-    s.add_argument("event"); s.add_argument("--report"); s.set_defaults(f=cmd_review)
-    s = sub.add_parser("publish", help="(CI) publish the approved issue")
-    s.add_argument("event"); s.add_argument("--approver", required=True)
-    s.add_argument("--report"); s.set_defaults(f=cmd_publish)
-    s = sub.add_parser("authorized", help="(CI) may this user approve?")
-    s.add_argument("user"); s.add_argument("role"); s.set_defaults(f=cmd_authorized)
+    s.add_argument("issue"); s.add_argument("--report")
+    s.add_argument("--write", action="store_true"); s.set_defaults(f=cmd_review)
+    s = sub.add_parser("title", help="(CI) pull request title for a submission")
+    s.add_argument("issue"); s.set_defaults(f=cmd_title)
     a = p.parse_args()
     sys.exit(a.f(a))
 
