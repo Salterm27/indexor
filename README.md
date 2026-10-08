@@ -19,7 +19,12 @@ published when a maintainer merges it. No dependencies: GitHub Actions and the P
 4. **Approve** — a maintainer merges the pull request. That publishes the
    entry, deploys the site to GitHub Pages and closes the issue.
 
-To reject a submission, close the issue or its pull request.
+To reject a request, close the issue (its pull request is closed for you)
+or close the pull request.
+
+A request is **locked once its pull request is open**: editing the issue
+afterwards does not change the pull request, so what a maintainer reviews is
+what gets merged. To change a request, close the issue and open a new one.
 
 ### Removing an entry
 
