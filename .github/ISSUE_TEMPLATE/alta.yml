@@ -1,0 +1,46 @@
+# Archivo generado por `tools/indice plantilla` — no editar a mano.
+name: Alta en el índice
+description: Pedir que se agregue un repositorio al índice.
+title: "[Alta] <nombre del repositorio>"
+labels: [alta]
+body:
+  - type: markdown
+    attributes:
+      value: Completá el formulario. Se valida automáticamente y se publica cuando un aprobador lo acepta.
+  - type: input
+    id: nombre
+    attributes:
+      label: "Nombre"
+      description: Cómo se va a mostrar en el índice (máx. 60 caracteres).
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: "URL del repositorio"
+      placeholder: https://github.com/organizacion/repo
+    validations:
+      required: true
+  - type: dropdown
+    id: seccion
+    attributes:
+      label: "Sección"
+      options:
+        - "Backend"
+        - "Frontend"
+        - "Infraestructura"
+        - "Documentación"
+    validations:
+      required: true
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: "Descripción"
+      description: Una línea sobre qué es y para qué sirve (máx. 200 caracteres).
+    validations:
+      required: true
+  - type: input
+    id: responsable
+    attributes:
+      label: "Responsable"
+      description: Usuario de GitHub o equipo a quien consultar (opcional).

@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""indice — gestiona un índice curado de repositorios (sin dependencias).
+
+El índice vive en datos/entradas.json y se publica como un .md con tabla de
+contenidos y secciones. Las altas llegan por issue y se publican cuando un
+aprobador las acepta. Ver README.md.
+"""
+import argparse, datetime, json, os, re, shutil, sys
+from urllib.parse import urlparse
+
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG = os.path.join(RAIZ, "indice.config.json")
+DATOS = os.path.join(RAIZ, "datos", "entradas.json")
+PLANTILLA = os.path.join(RAIZ, ".github", "ISSUE_TEMPLATE", "alta.yml")
+SITIO = os.path.join(RAIZ, "tools", "site")
+
+# Etiquetas de los campos del formulario de alta (issue form).
+CAMPOS = {
+    "nombre": "Nombre",
+    "url": "URL del repositorio",
+    "seccion": "Sección",
+    "descripcion": "Descripción",
+    "responsable": "Responsable",
+}
+MAX = {"nombre": 60, "descripcion": 200, "responsable": 60}
+ROLES_APROBADORES = {"admin", "maintain"}
+
+
+def leer(ruta):
+    with open(ruta, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def escribir(ruta, texto):
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(texto)
+
+
+def guardar_entradas(entradas):
+    escribir(DATOS, json.dumps(entradas, ensure_ascii=False, indent=2) + "\n")
+
+
+def una_linea(texto):
+    return re.sub(r"\s+", " ", texto or "").strip()
+
+
+def md(texto):
+    """Escapa texto de terceros para usarlo dentro de una tabla Markdown."""
+    return re.sub(r"([\\|\[\]<>`*_])", r"\\\1", una_linea(texto))
+
+
+def ancla(titulo):
+    """Ancla que GitHub genera para un encabezado."""
+    s = re.sub(r"[^\w\- ]", "", titulo.strip().lower())
+    return s.replace(" ", "-")
+
+
+def normalizar_url(url):
+    u = una_linea(url)
+    u = re.sub(r"\.git$", "", u.rstrip("/"))
+    return u
+
+
+def clave_url(url):
+    return normalizar_url(url).lower()
+
+
+# ---------------------------------------------------------------- validación
+
+def validar_config(cfg):
+    errores = []
+    if not una_linea(cfg.get("titulo", "")):
+        errores.append("config: falta `titulo`.")
+    if not re.fullmatch(r"[\w\-./]+\.md", cfg.get("salida", "")):
+        errores.append("config: `salida` debe ser la ruta de un archivo .md.")
+    secciones = cfg.get("secciones") or []
+    if not secciones:
+        errores.append("config: se necesita al menos una sección.")
+    ids, nombres = set(), set()
+    for s in secciones:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", s.get("id", "")):
+            errores.append(f"config: id de sección inválido: {s.get('id')!r} (minúsculas, números y guiones).")
+        if not una_linea(s.get("nombre", "")):
+            errores.append(f"config: la sección {s.get('id')!r} no tiene `nombre`.")
+        if s.get("id") in ids or s.get("nombre") in nombres:
+            errores.append(f"config: sección duplicada: {s.get('id')!r}.")
+        ids.add(s.get("id")); nombres.add(s.get("nombre"))
+    if not cfg.get("hosts_permitidos"):
+        errores.append("config: `hosts_permitidos` no puede estar vacío.")
+    return errores
+
+
+def validar_entrada(e, cfg, existentes=()):
+    """Devuelve la lista de problemas de una entrada (vacía si es válida)."""
+    errores = []
+    nombre, desc = una_linea(e.get("nombre")), una_linea(e.get("descripcion"))
+    if not nombre:
+        errores.append("Falta el **nombre**.")
+    elif len(nombre) > MAX["nombre"]:
+        errores.append(f"El **nombre** supera los {MAX['nombre']} caracteres.")
+    if not desc:
+        errores.append("Falta la **descripción**.")
+    elif len(desc) > MAX["descripcion"]:
+        errores.append(f"La **descripción** supera los {MAX['descripcion']} caracteres.")
+    if len(una_linea(e.get("responsable"))) > MAX["responsable"]:
+        errores.append(f"El **responsable** supera los {MAX['responsable']} caracteres.")
+
+    url = normalizar_url(e.get("url", ""))
+    p = urlparse(url)
+    hosts = [h.lower() for h in cfg.get("hosts_permitidos", [])]
+    if p.scheme != "https" or not p.netloc:
+        errores.append("La **URL** debe empezar con `https://`.")
+    elif p.netloc.lower() not in hosts:
+        errores.append("La **URL** debe ser de: " + ", ".join(f"`{h}`" for h in hosts) + ".")
+    elif not re.fullmatch(r"/[\w.\-]+/[\w.\-]+", p.path) or p.query or p.fragment:
+        errores.append("La **URL** debe apuntar a la raíz de un repositorio (`https://host/organizacion/repo`).")
+    elif any(clave_url(x["url"]) == clave_url(url) for x in existentes):
+        errores.append("Ese repositorio **ya está en el índice**.")
+
+    if e.get("seccion") not in [s["id"] for s in cfg["secciones"]]:
+        errores.append("La **sección** no existe. Opciones: " + ", ".join(s["nombre"] for s in cfg["secciones"]) + ".")
+    return errores
+
+
+# ------------------------------------------------------------------- issues
+
+def campos_del_issue(cuerpo):
+    """Parsea el cuerpo de un issue form: bloques '### Etiqueta' + valor."""
+    campos = {}
+    partes = re.split(r"^### +(.+?)\s*$", (cuerpo or "").replace("\r\n", "\n"), flags=re.M)
+    for etiqueta, valor in zip(partes[1::2], partes[2::2]):
+        valor = valor.strip()
+        campos[etiqueta.strip()] = "" if valor == "_No response_" else valor
+    return campos
+
+
+def entrada_del_issue(evento, cfg):
+    """Devuelve la entrada propuesta por el issue, o None si no es un alta."""
+    issue = evento["issue"]
+    campos = campos_del_issue(issue.get("body"))
+    if CAMPOS["url"] not in campos or CAMPOS["seccion"] not in campos:
+        return None
+    por_nombre = {s["nombre"]: s["id"] for s in cfg["secciones"]}
+    seccion = una_linea(campos.get(CAMPOS["seccion"]))
+    return {
+        "nombre": una_linea(campos.get(CAMPOS["nombre"])),
+        "url": normalizar_url(campos.get(CAMPOS["url"], "")),
+        "seccion": por_nombre.get(seccion, seccion),
+        "descripcion": una_linea(campos.get(CAMPOS["descripcion"])),
+        "responsable": una_linea(campos.get(CAMPOS["responsable"])),
+        "solicitada_por": issue["user"]["login"],
+        "issue": issue["number"],
+    }
+
+
+def resumen(e, cfg):
+    nombres = {s["id"]: s["nombre"] for s in cfg["secciones"]}
+    return "\n".join([
+        "| Campo | Valor |", "|---|---|",
+        f"| Nombre | {md(e['nombre'])} |",
+        f"| URL | {md(e['url'])} |",
+        f"| Sección | {md(nombres.get(e['seccion'], e['seccion']))} |",
+        f"| Descripción | {md(e['descripcion'])} |",
+        f"| Responsable | {md(e['responsable']) or '—'} |",
+    ])
+
+
+def cmd_revisar(a):
+    """Valida un issue de alta. Imprime: ajena | valida | invalida."""
+    cfg, entradas = leer(CONFIG), leer(DATOS)
+    e = entrada_del_issue(leer(a.evento), cfg)
+    if e is None:
+        print("ajena"); return 0
+    errores = validar_entrada(e, cfg, entradas)
+    if errores:
+        informe = ("### ❌ La solicitud necesita correcciones\n\n"
+                   + "\n".join(f"- {x}" for x in errores)
+                   + "\n\nEditá el issue para corregirlo: se vuelve a validar automáticamente.\n")
+    else:
+        informe = ("### ✅ Solicitud válida\n\n" + resumen(e, cfg)
+                   + "\n\nQueda a la espera de un aprobador. Cuando alguien autorizado le ponga la etiqueta "
+                     "`aprobada`, la entrada se publica en el índice y este issue se cierra.\n")
+    if a.informe:
+        escribir(a.informe, informe)
+    print("invalida" if errores else "valida")
+    return 0
+
+
+def cmd_publicar(a):
+    """Agrega al índice la entrada del issue aprobado y regenera el .md."""
+    cfg, entradas = leer(CONFIG), leer(DATOS)
+    e = entrada_del_issue(leer(a.evento), cfg)
+    errores = ["El issue no usa el formulario de alta."] if e is None else validar_entrada(e, cfg, entradas)
+    if errores:
+        if a.informe:
+            escribir(a.informe, "### ❌ No se pudo publicar\n\n" + "\n".join(f"- {x}" for x in errores) + "\n")
+        print("\n".join(errores), file=sys.stderr)
+        return 1
+    e["aprobada_por"] = a.aprobador
+    e["fecha"] = datetime.date.today().isoformat()
+    entradas.append(e)
+    guardar_entradas(entradas)
+    generar(cfg, entradas)
+    if a.informe:
+        escribir(a.informe, f"### 🚀 Publicada\n\n**{md(e['nombre'])}** ya está en el "
+                            f"[índice](../blob/HEAD/{cfg['salida']}). Aprobó @{a.aprobador}.\n")
+    print(f"Publicada: {e['nombre']} ({e['url']})")
+    return 0
+
+
+def cmd_autorizado(a):
+    """Sale con 0 si el usuario puede aprobar altas."""
+    lista = [x.lower() for x in leer(CONFIG).get("aprobadores") or []]
+    ok = a.usuario.lower() in lista if lista else a.rol in ROLES_APROBADORES
+    print("si" if ok else "no")
+    return 0 if ok else 1
+
+
+# ---------------------------------------------------------------- generación
+
+def responsable_md(r):
+    r = una_linea(r)
+    if re.fullmatch(r"@?[A-Za-z0-9][A-Za-z0-9-]{0,38}", r):
+        return f"[@{r.lstrip('@')}](https://github.com/{r.lstrip('@')})"
+    return md(r) or "—"
+
+
+def render(cfg, entradas):
+    L = [f"# {cfg['titulo']}", ""]
+    if cfg.get("descripcion"):
+        L += [cfg["descripcion"], ""]
+    L += ["<!-- Archivo generado por tools/indice — no editar a mano. -->", "",
+          f"**{len(entradas)}** repositorios · para sumar uno, "
+          "[abrí una solicitud de alta](../../issues/new?template=alta.yml).", "",
+          "## Contenido", ""]
+    por = {s["id"]: sorted((e for e in entradas if e["seccion"] == s["id"]),
+                           key=lambda e: e["nombre"].lower()) for s in cfg["secciones"]}
+    for s in cfg["secciones"]:
+        L.append(f"- [{s['nombre']}](#{ancla(s['nombre'])}) ({len(por[s['id']])})")
+    for s in cfg["secciones"]:
+        L += ["", f"## {s['nombre']}", ""]
+        if s.get("descripcion"):
+            L += [s["descripcion"], ""]
+        if not por[s["id"]]:
+            L.append("_Todavía no hay repositorios en esta sección._")
+            continue
+        L += ["| Repositorio | Descripción | Responsable |", "|---|---|---|"]
+        for e in por[s["id"]]:
+            L.append(f"| [{md(e['nombre'])}]({e['url']}) | {md(e['descripcion'])} | {responsable_md(e.get('responsable'))} |")
+    return "\n".join(L) + "\n"
+
+
+def generar(cfg, entradas):
+    escribir(os.path.join(RAIZ, cfg["salida"]), render(cfg, entradas))
+
+
+def render_plantilla(cfg):
+    q = lambda s: json.dumps(s, ensure_ascii=False)  # un string JSON es YAML válido
+    opciones = "\n".join(f"        - {q(s['nombre'])}" for s in cfg["secciones"])
+    return f"""# Archivo generado por `tools/indice plantilla` — no editar a mano.
+name: Alta en el índice
+description: Pedir que se agregue un repositorio al índice.
+title: "[Alta] <nombre del repositorio>"
+labels: [alta]
+body:
+  - type: markdown
+    attributes:
+      value: Completá el formulario. Se valida automáticamente y se publica cuando un aprobador lo acepta.
+  - type: input
+    id: nombre
+    attributes:
+      label: {q(CAMPOS['nombre'])}
+      description: Cómo se va a mostrar en el índice (máx. {MAX['nombre']} caracteres).
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: {q(CAMPOS['url'])}
+      placeholder: https://{cfg['hosts_permitidos'][0]}/organizacion/repo
+    validations:
+      required: true
+  - type: dropdown
+    id: seccion
+    attributes:
+      label: {q(CAMPOS['seccion'])}
+      options:
+{opciones}
+    validations:
+      required: true
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: {q(CAMPOS['descripcion'])}
+      description: Una línea sobre qué es y para qué sirve (máx. {MAX['descripcion']} caracteres).
+    validations:
+      required: true
+  - type: input
+    id: responsable
+    attributes:
+      label: {q(CAMPOS['responsable'])}
+      description: Usuario de GitHub o equipo a quien consultar (opcional).
+"""
+
+
+def cmd_build(a):
+    cfg = leer(CONFIG)
+    generar(cfg, leer(DATOS))
+    escribir(PLANTILLA, render_plantilla(cfg))
+    print(f"Generados {cfg['salida']} y .github/ISSUE_TEMPLATE/alta.yml")
+    return 0
+
+
+def cmd_lint(a):
+    cfg = leer(CONFIG)
+    errores = validar_config(cfg)
+    entradas = leer(DATOS) if not errores else []
+    for i, e in enumerate(entradas):
+        errores += [f"entrada {i + 1} ({e.get('nombre')!r}): {x}"
+                    for x in validar_entrada(e, cfg, entradas[:i])]
+    if not errores:
+        for ruta, esperado in ((os.path.join(RAIZ, cfg["salida"]), render(cfg, entradas)),
+                               (PLANTILLA, render_plantilla(cfg))):
+            actual = open(ruta, encoding="utf-8").read() if os.path.exists(ruta) else ""
+            if actual != esperado:
+                errores.append(f"{os.path.relpath(ruta, RAIZ)} está desactualizado: ejecutar `tools/indice build`.")
+    for x in errores:
+        print(f"::error::{x}" if os.environ.get("GITHUB_ACTIONS") else f"ERROR: {x}")
+    if not errores:
+        print(f"OK: {len(entradas)} entradas, {len(cfg['secciones'])} secciones.")
+    return 1 if errores else 0
+
+
+def cmd_add(a):
+    cfg, entradas = leer(CONFIG), leer(DATOS)
+    e = {"nombre": una_linea(a.nombre), "url": normalizar_url(a.url), "seccion": a.seccion,
+         "descripcion": una_linea(a.descripcion), "responsable": una_linea(a.responsable),
+         "fecha": datetime.date.today().isoformat()}
+    errores = validar_entrada(e, cfg, entradas)
+    if errores:
+        print("\n".join(errores), file=sys.stderr); return 1
+    entradas.append(e)
+    guardar_entradas(entradas)
+    generar(cfg, entradas)
+    print(f"Agregada: {e['nombre']}")
+    return 0
+
+
+def cmd_site(a):
+    cfg, entradas = leer(CONFIG), leer(DATOS)
+    destino = os.path.abspath(a.destino)
+    shutil.copytree(SITIO, destino, dirs_exist_ok=True)
+    publico = {"titulo": cfg["titulo"], "descripcion": cfg.get("descripcion", ""),
+               "repo": os.environ.get("GITHUB_REPOSITORY", ""),
+               "secciones": cfg["secciones"],
+               "entradas": [{k: e.get(k, "") for k in ("nombre", "url", "seccion", "descripcion", "responsable", "fecha")}
+                            for e in entradas]}
+    escribir(os.path.join(destino, "indice.json"), json.dumps(publico, ensure_ascii=False))
+    print(f"Sitio generado en {destino}")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="indice", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("build", help="regenera el .md del índice y el formulario de alta").set_defaults(f=cmd_build)
+    sub.add_parser("lint", help="valida config, entradas y archivos generados").set_defaults(f=cmd_lint)
+    s = sub.add_parser("add", help="agrega una entrada a mano (sin issue)")
+    for campo in ("nombre", "url", "seccion", "descripcion"):
+        s.add_argument(f"--{campo}", required=True)
+    s.add_argument("--responsable", default="")
+    s.set_defaults(f=cmd_add)
+    s = sub.add_parser("site", help="genera el sitio estático")
+    s.add_argument("destino", nargs="?", default="_site"); s.set_defaults(f=cmd_site)
+    s = sub.add_parser("revisar", help="(CI) valida un issue de alta")
+    s.add_argument("evento"); s.add_argument("--informe"); s.set_defaults(f=cmd_revisar)
+    s = sub.add_parser("publicar", help="(CI) publica el issue aprobado")
+    s.add_argument("evento"); s.add_argument("--aprobador", required=True)
+    s.add_argument("--informe"); s.set_defaults(f=cmd_publicar)
+    s = sub.add_parser("autorizado", help="(CI) ¿el usuario puede aprobar?")
+    s.add_argument("usuario"); s.add_argument("rol"); s.set_defaults(f=cmd_autorizado)
+    a = p.parse_args()
+    sys.exit(a.f(a))
+
+
+if __name__ == "__main__":
+    main()

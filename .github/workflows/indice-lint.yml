@@ -1,0 +1,20 @@
+name: indice-lint
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar config, entradas y archivos generados
+        run: tools/indice lint
+
+      - name: Verificar que el sitio se genera
+        run: |
+          tools/indice site /tmp/site-check
+          python3 -c "import json; json.load(open('/tmp/site-check/indice.json'))"

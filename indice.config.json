@@ -1,0 +1,13 @@
+{
+  "titulo": "Índice de repositorios",
+  "descripcion": "Catálogo curado de repositorios, organizado por sección.",
+  "salida": "INDICE.md",
+  "hosts_permitidos": ["github.com"],
+  "aprobadores": [],
+  "secciones": [
+    { "id": "backend", "nombre": "Backend", "descripcion": "Servicios y APIs." },
+    { "id": "frontend", "nombre": "Frontend", "descripcion": "Aplicaciones web y móviles." },
+    { "id": "infraestructura", "nombre": "Infraestructura", "descripcion": "Despliegue, CI/CD y operación." },
+    { "id": "documentacion", "nombre": "Documentación", "descripcion": "Decisiones, guías y contratos." }
+  ]
+}

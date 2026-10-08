@@ -1,0 +1,49 @@
+name: indice-validar
+
+# Valida cada solicitud de alta en cuanto se abre o se edita el issue.
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: indice-validar-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # El contenido del issue se lee del archivo del evento, nunca se
+      # interpola en el shell.
+      - name: Revisar la solicitud
+        id: revisar
+        run: echo "estado=$(tools/indice revisar "$GITHUB_EVENT_PATH" --informe informe.md)" >> "$GITHUB_OUTPUT"
+
+      - name: Asegurar etiquetas
+        if: steps.revisar.outputs.estado != 'ajena'
+        run: |
+          gh label create alta      --color 1d76db --description "Solicitud de alta en el índice" --force
+          gh label create invalida  --color d93f0b --description "La solicitud necesita correcciones" --force
+          gh label create aprobada  --color 0e8a16 --description "Un aprobador la aceptó: se publica" --force
+          gh label create publicada --color 5319e7 --description "Ya está en el índice" --force
+
+      - name: Comentar el resultado
+        if: steps.revisar.outputs.estado != 'ajena'
+        run: |
+          gh issue comment "$ISSUE" --edit-last --body-file informe.md \
+            || gh issue comment "$ISSUE" --body-file informe.md
+          if [ "${{ steps.revisar.outputs.estado }}" = "valida" ]; then
+            gh issue edit "$ISSUE" --add-label alta --remove-label invalida
+          else
+            gh issue edit "$ISSUE" --add-label alta,invalida
+          fi

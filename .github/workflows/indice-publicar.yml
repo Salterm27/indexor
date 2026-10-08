@@ -1,0 +1,81 @@
+name: indice-publicar
+
+# Cuando un aprobador pone la etiqueta `aprobada` en una solicitud de alta,
+# agrega la entrada al índice, regenera el .md, cierra el issue y despliega
+# el sitio.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+# Las publicaciones se procesan de a una para que no se pisen los commits.
+concurrency:
+  group: indice-publicar
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    if: github.event.label.name == 'aprobada' && github.event.issue.state == 'open'
+    runs-on: ubuntu-latest
+    outputs:
+      publicada: ${{ steps.commit.outputs.publicada }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+      APROBADOR: ${{ github.event.sender.login }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Verificar que quien aprueba está autorizado
+        id: permiso
+        run: |
+          rol=$(gh api "repos/$GH_REPO/collaborators/$APROBADOR/permission" --jq .role_name)
+          if tools/indice autorizado "$APROBADOR" "$rol"; then
+            echo "ok=si" >> "$GITHUB_OUTPUT"
+          else
+            gh issue edit "$ISSUE" --remove-label aprobada
+            gh issue comment "$ISSUE" --body "⛔ @$APROBADOR no está autorizado a aprobar altas. Se quitó la etiqueta \`aprobada\`."
+          fi
+
+      - name: Agregar la entrada al índice
+        id: alta
+        if: steps.permiso.outputs.ok == 'si'
+        run: |
+          if tools/indice publicar "$GITHUB_EVENT_PATH" --aprobador "$APROBADOR" --informe informe.md; then
+            echo "ok=si" >> "$GITHUB_OUTPUT"
+          else
+            gh issue edit "$ISSUE" --remove-label aprobada --add-label invalida
+            gh issue comment "$ISSUE" --body-file informe.md
+          fi
+
+      - name: Commitear y publicar
+        id: commit
+        if: steps.alta.outputs.ok == 'si'
+        run: |
+          tools/indice lint
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(indice): alta #$ISSUE aprobada por $APROBADOR"
+          git push
+          gh issue comment "$ISSUE" --body-file informe.md
+          gh issue edit "$ISSUE" --add-label publicada
+          gh issue close "$ISSUE" --reason completed
+          echo "publicada=si" >> "$GITHUB_OUTPUT"
+
+  # Un push hecho con el GITHUB_TOKEN no dispara otros workflows, así que el
+  # despliegue del sitio se encadena acá.
+  sitio:
+    needs: publicar
+    if: needs.publicar.outputs.publicada == 'si'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/indice-pages.yml
