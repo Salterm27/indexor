@@ -54,7 +54,7 @@ jobs:
           }
 
           gh api "repos/$GH_REPO/issues/$n" > "$issue"
-          kind=$(tools/indexor kind "$issue")
+          kind=$(python3 tools/indexor kind "$issue")
           [ "$kind" != "unrelated" ] || exit 0
           pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
 
@@ -90,11 +90,11 @@ jobs:
 
           # The title is read before the change is applied, while a removed
           # entry's name is still on disk.
-          title=$(tools/indexor title "$issue" 2>/dev/null || true)
-          state=$(tools/indexor review "$issue" --write --report "$report")
+          title=$(python3 tools/indexor title "$issue" 2>/dev/null || true)
+          state=$(python3 tools/indexor review "$issue" --write --report "$report")
 
           if [ "$state" = "valid" ]; then
-            tools/indexor lint
+            python3 tools/indexor lint
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add -A
@@ -158,8 +158,8 @@ jobs:
               esac
             done < "$RUNNER_TEMP/changes.txt"
             [ -s "$RUNNER_TEMP/changes.txt" ] || stale=yes
-            tools/indexor build >/dev/null
-            tools/indexor lint >/dev/null || stale=yes
+            python3 tools/indexor build >/dev/null
+            python3 tools/indexor lint >/dev/null || stale=yes
 
             if [ -n "$stale" ]; then
               gh pr close "$pr" --delete-branch --comment "The index changed and this request no longer applies." >/dev/null

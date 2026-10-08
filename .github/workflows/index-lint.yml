@@ -17,9 +17,9 @@ jobs:
           persist-credentials: false
 
       - name: Validate config, entries and generated files
-        run: tools/indexor lint
+        run: python3 tools/indexor lint
 
       - name: Check the site builds
         run: |
-          tools/indexor site /tmp/site-check
+          python3 tools/indexor site /tmp/site-check
           python3 -c "import json; json.load(open('/tmp/site-check/index.json'))"
