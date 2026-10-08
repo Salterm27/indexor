@@ -42,7 +42,9 @@ tools/site/                   Assets del sitio de GitHub Pages
    formulario de alta con las secciones nuevas.
 4. En **Settings → Actions → General → Workflow permissions**, elegir
    **Read and write permissions**.
-5. Las etiquetas (`alta`, `invalida`, `aprobada`, `publicada`) se crean solas
+5. En **Settings → Pages → Build and deployment → Source**, elegir
+   **GitHub Actions** (el workflow no puede habilitar Pages por sí solo).
+6. Las etiquetas (`alta`, `invalida`, `aprobada`, `publicada`) se crean solas
    con la primera solicitud.
 
 ## Quién puede aprobar
