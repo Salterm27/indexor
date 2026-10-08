@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "indexor.config.json")
 ENTRIES = os.path.join(ROOT, "data", "entries")
-TEMPLATE = os.path.join(ROOT, ".github", "ISSUE_TEMPLATE", "submission.yml")
+TEMPLATES = os.path.join(ROOT, ".github", "ISSUE_TEMPLATE")
 SITE = os.path.join(ROOT, "tools", "site")
 
 # Field labels of the submission issue form.
@@ -24,7 +24,9 @@ FIELDS = {
     "description": "Description",
     "owner": "Owner",
 }
-MAX = {"name": 60, "description": 200, "owner": 60}
+# Field labels of the removal issue form.
+REMOVAL = {"url": "Repository to remove", "reason": "Reason"}
+MAX = {"name": 60, "description": 200, "owner": 60, "reason": 300}
 
 
 def load(path):
@@ -38,9 +40,13 @@ def write(path, text):
         f.write(text)
 
 
+def entry_files():
+    return sorted(glob.glob(os.path.join(ENTRIES, "*.json")))
+
+
 def load_entries():
     """Every entry is its own file, so parallel submissions never conflict."""
-    return [load(f) for f in sorted(glob.glob(os.path.join(ENTRIES, "*.json")))]
+    return [load(f) for f in entry_files()]
 
 
 def save_entry(e):
@@ -180,37 +186,91 @@ def summary(e, cfg):
     ])
 
 
-def cmd_review(a):
-    """Validate a submission issue. Prints: unrelated | valid | invalid.
+def removal_from_issue(event):
+    """Return {url, reason} if the issue is a removal request, else None."""
+    fields = issue_fields(event.get("issue", event).get("body"))
+    if REMOVAL["url"] not in fields:
+        return None
+    return {"url": normalize_url(fields[REMOVAL["url"]]), "reason": one_line(fields.get(REMOVAL["reason"]))}
 
-    With --write, a valid entry is also added and the index regenerated.
-    """
-    cfg, entries = load(CONFIG), load_entries()
-    e = entry_from_issue(load(a.issue), cfg)
-    if e is None:
-        print("unrelated"); return 0
+
+def kind_of(event, cfg):
+    if removal_from_issue(event) is not None:
+        return "removal"
+    return "submission" if entry_from_issue(event, cfg) is not None else "unrelated"
+
+
+def review_submission(event, cfg, write_changes):
+    entries = load_entries()
+    e = entry_from_issue(event, cfg)
     errors = validate_entry(e, cfg, entries)
     if errors:
-        report = ("### ❌ This submission needs changes\n\n"
+        return errors, ""
+    if write_changes:
+        save_entry(e)
+        generate(cfg, entries + [e])
+    return [], ("### ✅ Valid submission\n\n" + summary(e, cfg)
+                + "\n\nA pull request with this entry is open. The entry is published when a "
+                  "maintainer merges it, and this issue is closed.\n")
+
+
+def review_removal(event, cfg, write_changes):
+    r = removal_from_issue(event)
+    errors = []
+    match = [f for f in entry_files() if url_key(load(f)["url"]) == url_key(r["url"])]
+    if not match:
+        errors.append("That repository is **not in the index**. Check the URL against the index.")
+    if not r["reason"]:
+        errors.append("The **reason** is missing.")
+    elif len(r["reason"]) > MAX["reason"]:
+        errors.append(f"The **reason** is longer than {MAX['reason']} characters.")
+    if errors:
+        return errors, ""
+    e = load(match[0])
+    if write_changes:
+        os.remove(match[0])
+        generate(cfg, load_entries())
+    return [], (f"### ✅ Valid removal request\n\n**{quiet(e['name'])}** ({quiet(e['url'])}) is in the index.\n\n"
+                "A pull request that removes it is open. The entry is removed when a "
+                "maintainer merges it, and this issue is closed.\n")
+
+
+def cmd_review(a):
+    """Validate a submission or removal issue. Prints: unrelated | valid | invalid.
+
+    With --write, a valid request is also applied and the index regenerated.
+    """
+    cfg, event = load(CONFIG), load(a.issue)
+    kind = kind_of(event, cfg)
+    if kind == "unrelated":
+        print("unrelated"); return 0
+    review = review_removal if kind == "removal" else review_submission
+    errors, report = review(event, cfg, a.write)
+    if errors:
+        report = ("### ❌ This request needs changes\n\n"
                   + "\n".join(f"- {x}" for x in errors)
                   + "\n\nEdit the issue to fix it: it is validated again automatically.\n")
-    else:
-        report = ("### ✅ Valid submission\n\n" + summary(e, cfg)
-                  + "\n\nA pull request with this entry is open. The entry is published when a "
-                    "maintainer merges it, and this issue is closed.\n")
-        if a.write:
-            save_entry(e)
-            generate(cfg, entries + [e])
     if a.report:
         write(a.report, report)
     print("invalid" if errors else "valid")
     return 0
 
 
+def cmd_kind(a):
+    """Print the kind of request an issue is: submission | removal | unrelated."""
+    print(kind_of(load(a.issue), load(CONFIG)))
+    return 0
+
+
 def cmd_title(a):
-    """Print the pull request title for a submission issue."""
-    e = entry_from_issue(load(a.issue), load(CONFIG))
-    print(f"Add {quiet(e['name'])} to the index")
+    """Print the pull request title for a submission or removal issue."""
+    cfg, event = load(CONFIG), load(a.issue)
+    r = removal_from_issue(event)
+    if r is not None:
+        names = [e["name"] for e in load_entries() if url_key(e["url"]) == url_key(r["url"])]
+        print(f"Remove {quiet(names[0] if names else r['url'])} from the index")
+    else:
+        print(f"Add {quiet(entry_from_issue(event, cfg)['name'])} to the index")
     return 0
 
 
@@ -229,8 +289,9 @@ def render(cfg, entries):
     if cfg.get("description"):
         L += [cfg["description"], ""]
     L += ["<!-- Generated by tools/indexor — do not edit by hand. -->", "",
-          f"**{n}** {'repository' if n == 1 else 'repositories'} · to add one, "
-          "[open a submission](../../issues/new?template=submission.yml).", "",
+          f"**{n}** {'repository' if n == 1 else 'repositories'}. "
+          "[Add one](../../issues/new?template=submission.yml) or "
+          "[request a removal](../../issues/new?template=removal.yml).", "",
           "## Contents", ""]
     by = {s["id"]: sorted((e for e in entries if e["section"] == s["id"]),
                           key=lambda e: e["name"].lower()) for s in cfg["sections"]}
@@ -302,11 +363,46 @@ body:
 """
 
 
+def render_removal_template(cfg):
+    q = lambda s: json.dumps(s, ensure_ascii=False)
+    return f"""# Generated by `tools/indexor build` — do not edit by hand.
+name: Remove from the index
+description: Ask for a repository to be removed from the index.
+title: "[Remove] <repository name>"
+labels: [removal]
+body:
+  - type: markdown
+    attributes:
+      value: The entry is removed once a maintainer merges the pull request this opens.
+  - type: input
+    id: url
+    attributes:
+      label: {q(REMOVAL['url'])}
+      description: The repository URL exactly as it appears in the index.
+      placeholder: https://{cfg['allowed_hosts'][0]}/owner/repo
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: {q(REMOVAL['reason'])}
+      description: Why it should be removed (max. {MAX['reason']} characters).
+    validations:
+      required: true
+"""
+
+
+def generated_files(cfg, entries):
+    return {os.path.join(ROOT, cfg["output"]): render(cfg, entries),
+            os.path.join(TEMPLATES, "submission.yml"): render_template(cfg),
+            os.path.join(TEMPLATES, "removal.yml"): render_removal_template(cfg)}
+
+
 def cmd_build(a):
     cfg = load(CONFIG)
-    generate(cfg, load_entries())
-    write(TEMPLATE, render_template(cfg))
-    print(f"Generated {cfg['output']} and .github/ISSUE_TEMPLATE/submission.yml")
+    for path, text in generated_files(cfg, load_entries()).items():
+        write(path, text)
+    print(f"Generated {cfg['output']} and the issue forms")
     return 0
 
 
@@ -318,8 +414,7 @@ def cmd_lint(a):
         errors += [f"entry {i + 1} ({e.get('name')!r}): {x}"
                    for x in validate_entry(e, cfg, entries[:i])]
     if not errors:
-        for path, expected in ((os.path.join(ROOT, cfg["output"]), render(cfg, entries)),
-                               (TEMPLATE, render_template(cfg))):
+        for path, expected in generated_files(cfg, entries).items():
             actual = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
             if actual != expected:
                 errors.append(f"{os.path.relpath(path, ROOT)} is out of date: run `tools/indexor build`.")
@@ -370,10 +465,12 @@ def main():
     s.set_defaults(f=cmd_add)
     s = sub.add_parser("site", help="generate the static site")
     s.add_argument("dest", nargs="?", default="_site"); s.set_defaults(f=cmd_site)
-    s = sub.add_parser("review", help="(CI) validate a submission issue")
+    s = sub.add_parser("review", help="(CI) validate a submission or removal issue")
     s.add_argument("issue"); s.add_argument("--report")
     s.add_argument("--write", action="store_true"); s.set_defaults(f=cmd_review)
-    s = sub.add_parser("title", help="(CI) pull request title for a submission")
+    s = sub.add_parser("kind", help="(CI) submission, removal or unrelated")
+    s.add_argument("issue"); s.set_defaults(f=cmd_kind)
+    s = sub.add_parser("title", help="(CI) pull request title for a request")
     s.add_argument("issue"); s.set_defaults(f=cmd_title)
     a = p.parse_args()
     sys.exit(a.f(a))

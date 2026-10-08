@@ -67,6 +67,11 @@ li { padding: 12px 0; border-top: 1px solid var(--rule); }
 .leader { flex: 1; min-width: 24px; border-bottom: 2px dotted var(--rule); transform: translateY(-4px); }
 .owner { color: var(--soft); font-size: 0.92rem; white-space: nowrap; }
 li p { margin: 2px 0 0; max-width: 62ch; color: var(--soft); overflow-wrap: anywhere; }
+/* Quiet until the row is hovered or focused; always shown on touch screens. */
+.remove { display: inline-block; margin-top: 4px; color: var(--soft); font-size: 0.85rem; text-underline-offset: 3px; opacity: 0; }
+.remove:hover { color: var(--ink); }
+li:hover .remove, .remove:focus-visible { opacity: 1; }
+@media (hover: none) { .remove { opacity: 1; } }
 mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
 
 @media (max-width: 760px) {

@@ -23,6 +23,8 @@ fetch("index.json").then(r => r.json()).then(d => {
   $("description").textContent = d.description;
   const addUrl = d.repo ? `https://github.com/${d.repo}/issues/new?template=submission.yml` : "";
   if (addUrl) { $("add").href = addUrl; $("add").hidden = false; }
+  const removeUrl = e => d.repo
+    ? `https://github.com/${d.repo}/issues/new?template=removal.yml&url=${encodeURIComponent(e.url)}` : "";
 
   const paint = term => {
     const toc = $("toc"), main = $("sections");
@@ -52,7 +54,9 @@ fetch("index.json").then(r => r.json()).then(d => {
         if (/^https:\/\//.test(e.url)) a.href = e.url;
         const row = el("div", { className: "row" }, a, el("span", { className: "leader" }));
         if (e.owner) row.append(el("span", { className: "owner" }, marked(e.owner, term)));
-        ol.append(el("li", {}, row, el("p", {}, marked(e.description, term))));
+        const li = el("li", {}, row, el("p", {}, marked(e.description, term)));
+        if (removeUrl(e)) li.append(el("a", { className: "remove", href: removeUrl(e), textContent: "Request removal" }));
+        ol.append(li);
       }
       sec.append(ol); main.append(sec);
     }
