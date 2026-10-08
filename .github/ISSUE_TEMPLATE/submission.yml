@@ -6,7 +6,7 @@ labels: [submission]
 body:
   - type: markdown
     attributes:
-      value: Fill in the form. It is validated automatically and published once an approver accepts it.
+      value: Fill in the form. It is validated automatically and published once a maintainer merges it.
   - type: input
     id: name
     attributes:

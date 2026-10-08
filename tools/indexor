@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """indexor — manage a curated index of repositories (no dependencies).
 
-The index lives in data/entries.json and is published as a Markdown file with
+The index lives in data/entries/ (one file per entry) and is published as a
+Markdown file with
 a table of contents and sections. New entries are submitted as issues; each
 valid submission becomes a pull request and is published when it is merged.
 See README.md.
@@ -263,7 +264,7 @@ labels: [submission]
 body:
   - type: markdown
     attributes:
-      value: Fill in the form. It is validated automatically and published once an approver accepts it.
+      value: Fill in the form. It is validated automatically and published once a maintainer merges it.
   - type: input
     id: name
     attributes:
