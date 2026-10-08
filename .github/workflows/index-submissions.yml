@@ -5,7 +5,7 @@ name: index-submissions
 # the change and closes the issue.
 on:
   issues:
-    types: [opened, edited, reopened]
+    types: [opened, edited, reopened, closed]
   # When main changes, open submission pull requests are rebuilt on top of it
   # so they never conflict with each other.
   push:
@@ -24,17 +24,17 @@ env:
   BASE: ${{ github.event.repository.default_branch }}
 
 jobs:
+  # An issue was opened, edited, reopened or closed.
   propose:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'issues'
     runs-on: ubuntu-latest
-    # GitHub keeps only one waiting run per group, so the group is per issue
-    # (the latest edit wins) and one for rebuilds (the latest main wins).
+    # GitHub keeps only one waiting run per group, so the group is per issue:
+    # the latest event for an issue wins.
     concurrency:
-      group: index-submissions-${{ github.event.issue.number || 'rebuild' }}
+      group: index-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
     env:
-      EVENT: ${{ github.event_name }}
-      ISSUE: ${{ github.event.issue.number }}
+      n: ${{ github.event.issue.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,80 +42,138 @@ jobs:
 
       # Issue content is fetched as JSON and only ever read by the tool; it
       # is never interpolated into the shell.
-      - name: Open or refresh submission pull requests
+      - name: Open a pull request for the request
+        run: |
+          set -euo pipefail
+          branch="index/issue-$n"
+          issue="$RUNNER_TEMP/issue.json"
+          report="$RUNNER_TEMP/report.md"
+          comment() {
+            gh issue comment "$n" --edit-last --body-file "$report" >/dev/null 2>&1 \
+              || gh issue comment "$n" --body-file "$report" >/dev/null
+          }
+
+          gh api "repos/$GH_REPO/issues/$n" > "$issue"
+          kind=$(tools/indexor kind "$issue")
+          [ "$kind" != "unrelated" ] || exit 0
+          pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+
+          # Closing the issue withdraws the request.
+          if [ "$(jq -r .state "$issue")" != "open" ]; then
+            if [ -n "$pr" ]; then
+              gh pr close "$pr" --delete-branch --comment "Issue #$n was closed, so this request is withdrawn." >/dev/null
+            fi
+            exit 0
+          fi
+
+          # Once a pull request exists it is frozen: what a maintainer reviewed
+          # is what gets merged, whatever happens to the issue afterwards.
+          if [ -n "$pr" ]; then
+            printf '### 🔒 This request is locked\n\nPull request #%s was opened from an earlier version of this issue, and later edits are not applied to it.\n\nTo change the request, close this issue and open a new one.\n' "$pr" > "$report"
+            comment
+            exit 0
+          fi
+
+          gh label create submission --color 1d76db --description "Request to add a repository to the index" --force >/dev/null
+          gh label create removal    --color fbca04 --description "Request to remove a repository from the index" --force >/dev/null
+          gh label create invalid    --color d93f0b --description "The request needs changes" --force >/dev/null
+          gh label create published  --color 5319e7 --description "Already in the index" --force >/dev/null
+          gh label create removed    --color 6a737d --description "Taken out of the index" --force >/dev/null
+
+          if [ "$kind" = "removal" ]; then
+            message="Remove the entry requested in #$n"
+            body="Removes the repository named in #$n. Merging takes it out of the index."
+          else
+            message="Add submission #$n to the index"
+            body="Adds the repository submitted in #$n. Merging publishes it to the index."
+          fi
+
+          # The title is read before the change is applied, while a removed
+          # entry's name is still on disk.
+          title=$(tools/indexor title "$issue" 2>/dev/null || true)
+          state=$(tools/indexor review "$issue" --write --report "$report")
+
+          if [ "$state" = "valid" ]; then
+            tools/indexor lint
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -q -m "$message"
+            git push -q --force origin "HEAD:refs/heads/$branch"
+            gh pr create --head "$branch" --base "$BASE" --title "$title" \
+              --body "$body
+
+          This pull request is frozen: later edits to the issue do not change it.
+
+          Closes #$n" >/dev/null
+            pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
+            printf '\nPull request: #%s. The request is now locked; to change it, close this issue and open a new one.\n' "$pr" >> "$report"
+            gh issue edit "$n" --add-label "$kind" --remove-label invalid >/dev/null
+          else
+            gh issue edit "$n" --add-label "$kind,invalid" >/dev/null
+          fi
+          comment
+
+  # main changed: replay every open request on top of it, so pending pull
+  # requests never conflict with each other.
+  rebuild:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: index-rebuild
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      # The change is replayed from the pull request branch itself, never
+      # from the issue, so a rebuild cannot pick up later edits.
+      - name: Rebuild open request pull requests
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          output=$(python3 -c "import json; print(json.load(open('indexor.config.json'))['output'])")
 
-          if [ "$EVENT" = "issues" ]; then
-            numbers="$ISSUE"
-          else
-            numbers=$(gh pr list --state open --limit 200 --json headRefName \
-              --jq '.[].headRefName | select(startswith("index/issue-")) | ltrimstr("index/issue-")')
-          fi
+          gh pr list --state open --limit 200 --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("index/issue-")) | "\(.number) \(.headRefName)"' \
+            > "$RUNNER_TEMP/open.txt"
 
-          for n in $numbers; do
+          while read -r pr branch; do
+            n="${branch#index/issue-}"
             case "$n" in *[!0-9]*|"") continue ;; esac
-            branch="index/issue-$n"
-            issue="$RUNNER_TEMP/issue-$n.json"
-            report="$RUNNER_TEMP/report-$n.md"
+            git fetch -q origin "refs/heads/$branch"
+            old=$(git rev-parse FETCH_HEAD)
             git checkout -q --detach "origin/$BASE"
             git clean -fdq
 
-            gh api "repos/$GH_REPO/issues/$n" > "$issue"
-            [ "$(jq -r .state "$issue")" = "open" ] || continue
-            # The title is read before the change is applied, while a removed
-            # entry's name is still on disk.
-            title=$(tools/indexor title "$issue" 2>/dev/null || true)
-            state=$(tools/indexor review "$issue" --write --report "$report")
-            [ "$state" != "unrelated" ] || continue
-            kind=$(tools/indexor kind "$issue")
-            if [ "$kind" = "removal" ]; then
-              message="Remove the entry requested in #$n"
-              body="Removes the repository named in #$n. Merging takes it out of the index."
-            else
-              message="Add submission #$n to the index"
-              body="Adds the repository submitted in #$n. Merging publishes it to the index."
+            # Replay the entry files the request added or deleted.
+            stale=""
+            git diff --name-status "origin/$BASE...$old" -- data/entries > "$RUNNER_TEMP/changes.txt"
+            while read -r status path; do
+              case "$status" in
+                D) if [ -e "$path" ]; then rm -f -- "$path"; else stale=yes; fi ;;
+                *) if [ -e "$path" ]; then stale=yes; else git show "$old:$path" > "$path"; fi ;;
+              esac
+            done < "$RUNNER_TEMP/changes.txt"
+            [ -s "$RUNNER_TEMP/changes.txt" ] || stale=yes
+            tools/indexor build >/dev/null
+            tools/indexor lint >/dev/null || stale=yes
+
+            if [ -n "$stale" ]; then
+              gh pr close "$pr" --delete-branch --comment "The index changed and this request no longer applies." >/dev/null
+              gh issue edit "$n" --add-label invalid >/dev/null
+              gh issue comment "$n" --body "### ❌ This request no longer applies
+
+          The index changed after pull request #$pr was opened (for example, the same repository was added or removed by another request), so it was closed. Open a new request if it is still needed." >/dev/null
+              continue
             fi
 
-            gh label create submission --color 1d76db --description "Request to add a repository to the index" --force >/dev/null
-            gh label create invalid    --color d93f0b --description "The submission needs changes" --force >/dev/null
-            gh label create removal    --color fbca04 --description "Request to remove a repository from the index" --force >/dev/null
-            gh label create published  --color 5319e7 --description "Already in the index" --force >/dev/null
-            gh label create removed    --color 6a737d --description "Taken out of the index" --force >/dev/null
-
-            pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
-
-            if [ "$state" = "valid" ]; then
-              tools/indexor lint
-              git add -A data "$output"
-              git commit -q -m "$message"
-              git push -q --force origin "HEAD:refs/heads/$branch"
-              if [ -z "$pr" ]; then
-                gh pr create --head "$branch" --base "$BASE" \
-                  --title "$title" \
-                  --body "$body
-
-          Closes #$n" >/dev/null
-                pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
-              fi
-              printf '\nPull request: #%s\n' "$pr" >> "$report"
-              gh issue edit "$n" --add-label "$kind" --remove-label invalid >/dev/null
-            else
-              if [ -n "$pr" ]; then
-                gh pr close "$pr" --delete-branch --comment "The request in #$n is no longer valid." >/dev/null
-              fi
-              gh issue edit "$n" --add-label "$kind,invalid" >/dev/null
-            fi
-
-            # On a rebuild, only speak up if something changed for the worse.
-            if [ "$EVENT" = "issues" ] || [ "$state" = "invalid" ]; then
-              gh issue comment "$n" --edit-last --body-file "$report" >/dev/null 2>&1 \
-                || gh issue comment "$n" --body-file "$report" >/dev/null
-            fi
-          done
+            git add -A
+            git commit -q -m "$(git log -1 --format=%s "$old")"
+            git push -q --force origin "HEAD:refs/heads/$branch"
+          done < "$RUNNER_TEMP/open.txt"
 
   published:
     if: >-
