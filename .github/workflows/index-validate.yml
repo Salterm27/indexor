@@ -29,7 +29,9 @@ jobs:
       # into the shell.
       - name: Review the submission
         id: review
-        run: echo "state=$(tools/indexor review "$GITHUB_EVENT_PATH" --report report.md)" >> "$GITHUB_OUTPUT"
+        run: |
+          state=$(tools/indexor review "$GITHUB_EVENT_PATH" --report report.md)
+          echo "state=$state" >> "$GITHUB_OUTPUT"
 
       - name: Ensure labels exist
         if: steps.review.outputs.state != 'unrelated'
