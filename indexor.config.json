@@ -1,0 +1,13 @@
+{
+  "title": "Repository index",
+  "description": "A curated catalogue of repositories, organised by section.",
+  "output": "INDEX.md",
+  "allowed_hosts": ["github.com"],
+  "approvers": [],
+  "sections": [
+    { "id": "backend", "name": "Backend", "description": "Services and APIs." },
+    { "id": "frontend", "name": "Frontend", "description": "Web and mobile apps." },
+    { "id": "infrastructure", "name": "Infrastructure", "description": "Deployment, CI/CD and operations." },
+    { "id": "documentation", "name": "Documentation", "description": "Decisions, guides and contracts." }
+  ]
+}

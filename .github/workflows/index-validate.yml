@@ -1,0 +1,49 @@
+name: index-validate
+
+# Validates each submission as soon as the issue is opened or edited.
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: index-validate-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The issue content is read from the event file, never interpolated
+      # into the shell.
+      - name: Review the submission
+        id: review
+        run: echo "state=$(tools/indexor review "$GITHUB_EVENT_PATH" --report report.md)" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure labels exist
+        if: steps.review.outputs.state != 'unrelated'
+        run: |
+          gh label create submission --color 1d76db --description "Request to add a repository to the index" --force
+          gh label create invalid    --color d93f0b --description "The submission needs changes" --force
+          gh label create approved   --color 0e8a16 --description "Accepted by an approver: gets published" --force
+          gh label create published  --color 5319e7 --description "Already in the index" --force
+
+      - name: Comment the result
+        if: steps.review.outputs.state != 'unrelated'
+        run: |
+          gh issue comment "$ISSUE" --edit-last --body-file report.md \
+            || gh issue comment "$ISSUE" --body-file report.md
+          if [ "${{ steps.review.outputs.state }}" = "valid" ]; then
+            gh issue edit "$ISSUE" --add-label submission --remove-label invalid
+          else
+            gh issue edit "$ISSUE" --add-label submission,invalid
+          fi

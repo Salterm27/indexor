@@ -1,0 +1,20 @@
+name: index-lint
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate config, entries and generated files
+        run: tools/indexor lint
+
+      - name: Check the site builds
+        run: |
+          tools/indexor site /tmp/site-check
+          python3 -c "import json; json.load(open('/tmp/site-check/index.json'))"

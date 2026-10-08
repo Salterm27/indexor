@@ -1,63 +1,63 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Índice</title>
+<title>Index</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1 id="titulo">Índice</h1>
-  <p id="descripcion"></p>
+  <h1 id="title">Index</h1>
+  <p id="description"></p>
   <div class="barra">
-    <input id="buscar" type="search" placeholder="Buscar repositorio…" aria-label="Buscar">
-    <a id="alta" class="boton" hidden>Proponer un repositorio</a>
+    <input id="search" type="search" placeholder="Search repositories…" aria-label="Search">
+    <a id="submit" class="button" hidden>Submit a repository</a>
   </div>
-  <nav id="toc" aria-label="Secciones"></nav>
+  <nav id="toc" aria-label="Sections"></nav>
 </header>
-<main id="secciones"></main>
+<main id="sections"></main>
 <script>
-const el = (tag, props = {}, ...hijos) => {
+const el = (tag, props = {}, ...children) => {
   const n = Object.assign(document.createElement(tag), props);
-  n.append(...hijos);
+  n.append(...children);
   return n;
 };
-fetch("indice.json").then(r => r.json()).then(d => {
-  document.title = d.titulo;
-  document.getElementById("titulo").textContent = d.titulo;
-  document.getElementById("descripcion").textContent = d.descripcion;
+fetch("index.json").then(r => r.json()).then(d => {
+  document.title = d.title;
+  document.getElementById("title").textContent = d.title;
+  document.getElementById("description").textContent = d.description;
   if (d.repo) {
-    const a = document.getElementById("alta");
-    a.href = `https://github.com/${d.repo}/issues/new?template=alta.yml`;
+    const a = document.getElementById("submit");
+    a.href = `https://github.com/${d.repo}/issues/new?template=submission.yml`;
     a.hidden = false;
   }
-  const toc = document.getElementById("toc"), main = document.getElementById("secciones");
-  const pintar = filtro => {
+  const toc = document.getElementById("toc"), main = document.getElementById("sections");
+  const paint = filter => {
     toc.replaceChildren(); main.replaceChildren();
-    for (const s of d.secciones) {
-      const items = d.entradas
-        .filter(e => e.seccion === s.id)
-        .filter(e => (e.nombre + " " + e.descripcion + " " + e.responsable).toLowerCase().includes(filtro))
-        .sort((a, b) => a.nombre.localeCompare(b.nombre));
-      toc.append(el("a", { href: "#" + s.id, textContent: `${s.nombre} (${items.length})` }));
-      const sec = el("section", { id: s.id }, el("h2", { textContent: s.nombre }));
-      if (s.descripcion) sec.append(el("p", { className: "tenue", textContent: s.descripcion }));
-      if (!items.length) sec.append(el("p", { className: "tenue", textContent: "Sin repositorios." }));
+    for (const s of d.sections) {
+      const items = d.entries
+        .filter(e => e.section === s.id)
+        .filter(e => (e.name + " " + e.description + " " + e.owner).toLowerCase().includes(filter))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      toc.append(el("a", { href: "#" + s.id, textContent: `${s.name} (${items.length})` }));
+      const sec = el("section", { id: s.id }, el("h2", { textContent: s.name }));
+      if (s.description) sec.append(el("p", { className: "muted", textContent: s.description }));
+      if (!items.length) sec.append(el("p", { className: "muted", textContent: "No repositories." }));
       const ul = el("ul");
       for (const e of items) {
-        // Solo se enlazan URLs https: el contenido viene de issues de terceros.
-        const a = el("a", { textContent: e.nombre, rel: "noopener" });
+        // Only https URLs are linked: the content comes from third-party issues.
+        const a = el("a", { textContent: e.name, rel: "noopener" });
         if (/^https:\/\//.test(e.url)) a.href = e.url;
-        const li = el("li", {}, a, el("p", { textContent: e.descripcion }));
-        if (e.responsable) li.append(el("span", { className: "tenue", textContent: e.responsable }));
+        const li = el("li", {}, a, el("p", { textContent: e.description }));
+        if (e.owner) li.append(el("span", { className: "muted", textContent: e.owner }));
         ul.append(li);
       }
       sec.append(ul); main.append(sec);
     }
   };
-  pintar("");
-  document.getElementById("buscar").addEventListener("input", ev => pintar(ev.target.value.trim().toLowerCase()));
+  paint("");
+  document.getElementById("search").addEventListener("input", ev => paint(ev.target.value.trim().toLowerCase()));
 });
 </script>
 </body>

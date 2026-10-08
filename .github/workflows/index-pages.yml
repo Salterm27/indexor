@@ -1,4 +1,4 @@
-name: indice-pages
+name: index-pages
 
 on:
   push:
@@ -26,16 +26,15 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Validar el índice
-        run: tools/indice lint
+      - name: Validate the index
+        run: tools/indexor lint
 
-      - name: Generar sitio
-        run: tools/indice site _site
+      - name: Generate the site
+        run: tools/indexor site _site
 
+      # Pages must be enabled once by hand: Settings → Pages → Source:
+      # GitHub Actions.
       - uses: actions/configure-pages@v5
-        with:
-          # Habilita GitHub Pages (source: GitHub Actions) si aún no lo está
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

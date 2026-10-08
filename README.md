@@ -1,77 +1,84 @@
 # indexor
 
-Framework para mantener un **índice curado de repositorios**: un `.md` con
-tabla de contenidos y secciones, donde cada alta se pide por issue y se
-publica sola cuando un aprobador la acepta. Sin dependencias: GitHub Actions
-y Python de la librería estándar.
+A framework for keeping a **curated index of repositories**: one Markdown
+file with a table of contents and sections, where every new entry is
+requested through an issue and published automatically once an approver
+accepts it. No dependencies: GitHub Actions and the Python standard library.
 
-📖 El índice: [INDICE.md](INDICE.md)
+📖 The index: [INDEX.md](INDEX.md)
 
-## Cómo funciona
+## How it works
 
-1. **Solicitar** — alguien abre un issue con el formulario «Alta en el
-   índice» (nombre, URL, sección, descripción, responsable).
-2. **Validar** — `indice-validar` revisa la solicitud y comenta el resultado:
-   URL de un host permitido, sección existente, sin duplicados, largos
-   máximos. Si se edita el issue, se vuelve a validar.
-3. **Aprobar** — un aprobador pone la etiqueta **`aprobada`**.
-4. **Publicar** — `indice-publicar` verifica que quien etiquetó esté
-   autorizado, agrega la entrada a `datos/entradas.json`, regenera
-   `INDICE.md`, hace el commit, cierra el issue y despliega el sitio en
-   GitHub Pages.
+1. **Submit** — someone opens an issue with the "Add to the index" form
+   (name, URL, section, description, owner).
+2. **Validate** — `index-validate` reviews the submission and comments the
+   result: URL on an allowed host, existing section, no duplicates, length
+   limits. Editing the issue validates it again.
+3. **Approve** — an approver adds the **`approved`** label.
+4. **Publish** — `index-publish` checks that whoever added the label is
+   authorised, adds the entry to `data/entries.json`, regenerates
+   `INDEX.md`, commits, closes the issue and deploys the site to GitHub
+   Pages.
 
-Para rechazar una solicitud alcanza con cerrar el issue.
+To reject a submission, just close the issue.
 
-## Estructura
+## Layout
 
 ```
-indice.config.json            Título, secciones, hosts permitidos, aprobadores
-datos/entradas.json           Fuente de verdad del índice
-INDICE.md                     Índice publicado (generado, no editar a mano)
-tools/indice                  CLI (python3, sin dependencias)
-tools/site/                   Assets del sitio de GitHub Pages
-.github/ISSUE_TEMPLATE/       Formulario de alta (generado desde la config)
-.github/workflows/            Validación, publicación, lint y sitio
+indexor.config.json           Title, sections, allowed hosts, approvers
+data/entries.json             Source of truth for the index
+INDEX.md                      Published index (generated, do not edit by hand)
+tools/indexor                 CLI (python3, no dependencies)
+tools/site/                   Assets for the GitHub Pages site
+.github/ISSUE_TEMPLATE/       Submission form (generated from the config)
+.github/workflows/            Validation, publishing, lint and site
 ```
 
-## Adoptarlo en un repositorio nuevo
+## Make your own
 
-1. Crear el repositorio a partir de este (o copiar los archivos).
-2. Editar `indice.config.json`: título, descripción, secciones y hosts.
-3. Ejecutar `tools/indice build` y commitear. Esto regenera `INDICE.md` y el
-   formulario de alta con las secciones nuevas.
-4. En **Settings → Actions → General → Workflow permissions**, elegir
+1. Click **Use this template** (or fork the repository). On a fork, also
+   turn on **Issues** in Settings → General and enable workflows in the
+   **Actions** tab — both are off by default on forks.
+2. Edit `indexor.config.json`: title, description, sections and hosts.
+3. Empty `data/entries.json` (`[]`) if you do not want the existing entries.
+4. Run `tools/indexor build` and commit. This regenerates `INDEX.md` and the
+   submission form with your sections.
+5. In **Settings → Actions → General → Workflow permissions**, choose
    **Read and write permissions**.
-5. En **Settings → Pages → Build and deployment → Source**, elegir
-   **GitHub Actions** (el workflow no puede habilitar Pages por sí solo).
-6. Las etiquetas (`alta`, `invalida`, `aprobada`, `publicada`) se crean solas
-   con la primera solicitud.
+6. In **Settings → Pages → Build and deployment → Source**, choose
+   **GitHub Actions** (the workflow cannot enable Pages by itself).
 
-## Quién puede aprobar
+The labels (`submission`, `invalid`, `approved`, `published`) are created
+automatically with the first submission.
 
-- Por defecto, quien tenga rol **Admin** o **Maintain** en el repositorio.
-- Si `aprobadores` en `indice.config.json` tiene usuarios, **solo** ellos:
-  `"aprobadores": ["Salterm27"]`.
+## Who can approve
 
-Si alguien sin autorización pone la etiqueta, el workflow la quita y lo
-avisa en el issue.
+- By default, anyone with the **Admin** or **Maintain** role on the
+  repository.
+- If `approvers` in `indexor.config.json` lists users, **only** they can:
+  `"approvers": ["octocat"]`.
 
-> **Rama principal**: el bot publica con un push directo a `main`. Un
-> ruleset que exija pull request sobre `main` bloquea ese push, así que el
-> control de este repositorio es la verificación del aprobador, no el
-> ruleset. Quien tenga permiso de escritura puede igualmente editar los
-> archivos a mano; conviene dar `Write` solo a quien corresponda (para abrir
-> issues no hace falta).
+If someone without authorisation adds the label, the workflow removes it and
+says so on the issue.
+
+> **Main branch**: the bot publishes with a direct push to `main`. A ruleset
+> that requires pull requests on `main` blocks that push, so the control here
+> is the approver check, not the ruleset. Anyone with write access can still
+> edit the files by hand; opening issues does not require it.
 
 ## CLI
 
 ```bash
-tools/indice build      # regenera INDICE.md y el formulario de alta
-tools/indice lint       # valida config, entradas y archivos generados
-tools/indice site       # genera el sitio en _site/
-tools/indice add --nombre "Mi repo" --url https://github.com/org/repo \
-  --seccion backend --descripcion "Qué hace"   # alta manual, sin issue
+tools/indexor build     # regenerate INDEX.md and the submission form
+tools/indexor lint      # validate config, entries and generated files
+tools/indexor site      # generate the site in _site/
+tools/indexor add --name "My repo" --url https://github.com/owner/repo \
+  --section backend --description "What it does"   # manual entry, no issue
 ```
 
-Para quitar o corregir una entrada, editar `datos/entradas.json` y ejecutar
-`tools/indice build`.
+To remove or fix an entry, edit `data/entries.json` and run
+`tools/indexor build`.
+
+## License
+
+[MIT](LICENSE)
