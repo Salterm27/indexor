@@ -16,6 +16,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Run the tests
+        run: python3 -m unittest discover -s tests
+
       - name: Validate config, entries and generated files
         run: tools/indexor lint
 
