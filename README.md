@@ -21,6 +21,13 @@ published when a maintainer merges it. No dependencies: GitHub Actions and the P
 
 To reject a submission, close the issue or its pull request.
 
+### Removing an entry
+
+Removal works the same way in reverse. Anyone can open the "Remove from the
+index" form — every entry on the site has a **Request removal** link that
+fills in the URL — and give a reason. The bot opens a pull request that
+deletes the entry, and a maintainer merges it to take the entry out.
+
 Each entry is its own file, and open submission pull requests are rebuilt
 whenever `main` changes, so several submissions can be pending at once
 without conflicting.
@@ -33,7 +40,7 @@ data/entries/                 Source of truth: one JSON file per entry
 INDEX.md                      Published index (generated, do not edit by hand)
 tools/indexor                 CLI (python3, no dependencies)
 tools/site/                   The GitHub Pages site (HTML, CSS, JS)
-.github/ISSUE_TEMPLATE/       Submission form (generated from the config)
+.github/ISSUE_TEMPLATE/       Submission and removal forms (generated)
 .github/workflows/            Submissions, lint and site
 ```
 
@@ -53,8 +60,8 @@ tools/site/                   The GitHub Pages site (HTML, CSS, JS)
 6. In **Settings → Pages → Build and deployment → Source**, choose
    **GitHub Actions** (the workflow cannot enable Pages by itself).
 
-The labels (`submission`, `invalid`, `published`) are created automatically
-with the first submission.
+The labels (`submission`, `removal`, `invalid`, `published`, `removed`) are
+created automatically with the first request.
 
 ## Who can approve
 
@@ -85,14 +92,14 @@ Two things to know when writing that ruleset:
   before it reaches Markdown, and the site only ever writes it as text.
 - **Least privilege.** Each workflow declares the minimum token permissions,
   and workflows that do not push do not keep credentials. The bot can only
-  push `submission/issue-N` branches; it cannot change `main`.
+  push `index/issue-N` branches; it cannot change `main`.
 - The site sends a Content-Security-Policy that blocks everything not served
   from the site itself.
 
 ## CLI
 
 ```bash
-tools/indexor build     # regenerate INDEX.md and the submission form
+tools/indexor build     # regenerate INDEX.md and the issue forms
 tools/indexor lint      # validate config, entries and generated files
 tools/indexor site      # generate the site in _site/
 tools/indexor add --name "My repo" --url https://github.com/owner/repo \

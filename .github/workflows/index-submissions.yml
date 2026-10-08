@@ -1,8 +1,8 @@
 name: index-submissions
 
-# Turns each valid submission issue into a pull request that adds the entry.
-# Merging the pull request is the approval: it publishes the entry and
-# closes the issue.
+# Turns each valid submission or removal issue into a pull request that adds
+# or deletes the entry. Merging the pull request is the approval: it applies
+# the change and closes the issue.
 on:
   issues:
     types: [opened, edited, reopened]
@@ -53,12 +53,12 @@ jobs:
             numbers="$ISSUE"
           else
             numbers=$(gh pr list --state open --limit 200 --json headRefName \
-              --jq '.[].headRefName | select(startswith("submission/issue-")) | ltrimstr("submission/issue-")')
+              --jq '.[].headRefName | select(startswith("index/issue-")) | ltrimstr("index/issue-")')
           fi
 
           for n in $numbers; do
             case "$n" in *[!0-9]*|"") continue ;; esac
-            branch="submission/issue-$n"
+            branch="index/issue-$n"
             issue="$RUNNER_TEMP/issue-$n.json"
             report="$RUNNER_TEMP/report-$n.md"
             git checkout -q --detach "origin/$BASE"
@@ -66,35 +66,48 @@ jobs:
 
             gh api "repos/$GH_REPO/issues/$n" > "$issue"
             [ "$(jq -r .state "$issue")" = "open" ] || continue
+            # The title is read before the change is applied, while a removed
+            # entry's name is still on disk.
+            title=$(tools/indexor title "$issue" 2>/dev/null || true)
             state=$(tools/indexor review "$issue" --write --report "$report")
             [ "$state" != "unrelated" ] || continue
+            kind=$(tools/indexor kind "$issue")
+            if [ "$kind" = "removal" ]; then
+              message="Remove the entry requested in #$n"
+              body="Removes the repository named in #$n. Merging takes it out of the index."
+            else
+              message="Add submission #$n to the index"
+              body="Adds the repository submitted in #$n. Merging publishes it to the index."
+            fi
 
             gh label create submission --color 1d76db --description "Request to add a repository to the index" --force >/dev/null
             gh label create invalid    --color d93f0b --description "The submission needs changes" --force >/dev/null
+            gh label create removal    --color fbca04 --description "Request to remove a repository from the index" --force >/dev/null
             gh label create published  --color 5319e7 --description "Already in the index" --force >/dev/null
+            gh label create removed    --color 6a737d --description "Taken out of the index" --force >/dev/null
 
             pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
 
             if [ "$state" = "valid" ]; then
               tools/indexor lint
-              git add data "$output"
-              git commit -q -m "Add submission #$n to the index"
+              git add -A data "$output"
+              git commit -q -m "$message"
               git push -q --force origin "HEAD:refs/heads/$branch"
               if [ -z "$pr" ]; then
                 gh pr create --head "$branch" --base "$BASE" \
-                  --title "$(tools/indexor title "$issue")" \
-                  --body "Adds the repository submitted in #$n. Merging publishes it to the index.
+                  --title "$title" \
+                  --body "$body
 
           Closes #$n" >/dev/null
                 pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
               fi
               printf '\nPull request: #%s\n' "$pr" >> "$report"
-              gh issue edit "$n" --add-label submission --remove-label invalid >/dev/null
+              gh issue edit "$n" --add-label "$kind" --remove-label invalid >/dev/null
             else
               if [ -n "$pr" ]; then
-                gh pr close "$pr" --delete-branch --comment "The submission in #$n is no longer valid." >/dev/null
+                gh pr close "$pr" --delete-branch --comment "The request in #$n is no longer valid." >/dev/null
               fi
-              gh issue edit "$n" --add-label submission,invalid >/dev/null
+              gh issue edit "$n" --add-label "$kind,invalid" >/dev/null
             fi
 
             # On a rebuild, only speak up if something changed for the worse.
@@ -107,19 +120,26 @@ jobs:
   published:
     if: >-
       github.event_name == 'pull_request' && github.event.pull_request.merged &&
-      startsWith(github.event.pull_request.head.ref, 'submission/issue-') &&
+      startsWith(github.event.pull_request.head.ref, 'index/issue-') &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       BRANCH: ${{ github.event.pull_request.head.ref }}
       MERGER: ${{ github.event.pull_request.merged_by.login }}
     steps:
-      - name: Mark the submission as published
+      - name: Mark the request as done
         run: |
-          n="${BRANCH#submission/issue-}"
+          n="${BRANCH#index/issue-}"
           case "$n" in *[!0-9]*|"") exit 0 ;; esac
-          gh issue edit "$n" --add-label published
-          gh issue comment "$n" --body "### 🚀 Published
+          if gh api "repos/$GH_REPO/issues/$n" --jq '.labels[].name' | grep -qx removal; then
+            gh issue edit "$n" --add-label removed
+            gh issue comment "$n" --body "### 🗑️ Removed
+
+          This repository is no longer in the index. Approved by @$MERGER."
+          else
+            gh issue edit "$n" --add-label published
+            gh issue comment "$n" --body "### 🚀 Published
 
           This repository is now in the index. Approved by @$MERGER."
+          fi
           gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH" || true
