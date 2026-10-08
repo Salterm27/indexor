@@ -2,8 +2,8 @@
 
 A framework for keeping a **curated index of repositories**: one Markdown
 file with a table of contents and sections, where every new entry is
-requested through an issue and published automatically once an approver
-accepts it. No dependencies: GitHub Actions and the Python standard library.
+requested through an issue, turned into a pull request by a bot, and
+published when a maintainer merges it. No dependencies: GitHub Actions and the Python standard library.
 
 📖 The index: [INDEX.md](INDEX.md)
 
@@ -11,27 +11,30 @@ accepts it. No dependencies: GitHub Actions and the Python standard library.
 
 1. **Submit** — someone opens an issue with the "Add to the index" form
    (name, URL, section, description, owner).
-2. **Validate** — `index-validate` reviews the submission and comments the
-   result: URL on an allowed host, existing section, no duplicates, length
-   limits. Editing the issue validates it again.
-3. **Approve** — an approver adds the **`approved`** label.
-4. **Publish** — `index-publish` checks that whoever added the label is
-   authorised, adds the entry to `data/entries.json`, regenerates
-   `INDEX.md`, commits, closes the issue and deploys the site to GitHub
-   Pages.
+2. **Validate** — `index-submissions` reviews it and comments the result:
+   URL on an allowed host, existing section, no duplicates, length limits.
+   Editing the issue validates it again.
+3. **Propose** — for a valid submission, the bot opens a pull request that
+   adds the entry and the regenerated `INDEX.md`.
+4. **Approve** — a maintainer merges the pull request. That publishes the
+   entry, deploys the site to GitHub Pages and closes the issue.
 
-To reject a submission, just close the issue.
+To reject a submission, close the issue or its pull request.
+
+Each entry is its own file, and open submission pull requests are rebuilt
+whenever `main` changes, so several submissions can be pending at once
+without conflicting.
 
 ## Layout
 
 ```
-indexor.config.json           Title, sections, allowed hosts, approvers
-data/entries.json             Source of truth for the index
+indexor.config.json           Title, sections, allowed hosts
+data/entries/                 Source of truth: one JSON file per entry
 INDEX.md                      Published index (generated, do not edit by hand)
 tools/indexor                 CLI (python3, no dependencies)
 tools/site/                   The GitHub Pages site (HTML, CSS, JS)
 .github/ISSUE_TEMPLATE/       Submission form (generated from the config)
-.github/workflows/            Validation, publishing, lint and site
+.github/workflows/            Submissions, lint and site
 ```
 
 ## Make your own
@@ -40,31 +43,33 @@ tools/site/                   The GitHub Pages site (HTML, CSS, JS)
    turn on **Issues** in Settings → General and enable workflows in the
    **Actions** tab — both are off by default on forks.
 2. Edit `indexor.config.json`: title, description, sections and hosts.
-3. Empty `data/entries.json` (`[]`) if you do not want the existing entries.
+3. Delete the files in `data/entries/` if you do not want the existing
+   entries.
 4. Run `tools/indexor build` and commit. This regenerates `INDEX.md` and the
    submission form with your sections.
 5. In **Settings → Actions → General → Workflow permissions**, choose
-   **Read and write permissions**.
+   **Read and write permissions** and tick **Allow GitHub Actions to create
+   and approve pull requests**.
 6. In **Settings → Pages → Build and deployment → Source**, choose
    **GitHub Actions** (the workflow cannot enable Pages by itself).
 
-The labels (`submission`, `invalid`, `approved`, `published`) are created
-automatically with the first submission.
+The labels (`submission`, `invalid`, `published`) are created automatically
+with the first submission.
 
 ## Who can approve
 
-- By default, anyone with the **Admin** or **Maintain** role on the
-  repository.
-- If `approvers` in `indexor.config.json` lists users, **only** they can:
-  `"approvers": ["octocat"]`.
+Whoever is allowed to merge pull requests into `main`. Protect the branch
+with a ruleset (Settings → Rules → Rulesets) that requires a pull request,
+and the only way into the index is a merged, reviewable diff. Add required
+approvals or code owners there if you want a narrower set of approvers.
 
-If someone without authorisation adds the label, the workflow removes it and
-says so on the issue.
+Two things to know when writing that ruleset:
 
-> **Main branch**: the bot publishes with a direct push to `main`. A ruleset
-> that requires pull requests on `main` blocks that push, so the control here
-> is the approver check, not the ruleset. Anyone with write access can still
-> edit the files by hand; opening issues does not require it.
+- Pull requests opened by the bot do not trigger other workflows, so do not
+  add **required status checks**: they would never report. The bot runs the
+  same lint itself before it opens the pull request.
+- Do not require a **deployment** before merging: a submission branch is
+  never deployed.
 
 ## Dependencies and security
 
@@ -79,7 +84,8 @@ says so on the issue.
   on an allowed host, and point at a repository root; text is escaped
   before it reaches Markdown, and the site only ever writes it as text.
 - **Least privilege.** Each workflow declares the minimum token permissions,
-  and workflows that do not push do not keep credentials.
+  and workflows that do not push do not keep credentials. The bot can only
+  push `submission/issue-N` branches; it cannot change `main`.
 - The site sends a Content-Security-Policy that blocks everything not served
   from the site itself.
 
@@ -93,8 +99,8 @@ tools/indexor add --name "My repo" --url https://github.com/owner/repo \
   --section backend --description "What it does"   # manual entry, no issue
 ```
 
-To remove or fix an entry, edit `data/entries.json` and run
-`tools/indexor build`.
+To remove or fix an entry, delete or edit its file in `data/entries/`, run
+`tools/indexor build`, and open a pull request.
 
 ## License
 
