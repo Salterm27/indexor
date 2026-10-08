@@ -50,6 +50,11 @@ def md(text):
     return re.sub(r"([\\|\[\]<>`*_])", r"\\\1", one_line(text))
 
 
+def quiet(text):
+    """md() for bot comments: also stops submitted text from pinging @users."""
+    return md(text).replace("@", "@\u200b")
+
+
 def anchor(title):
     """The anchor GitHub generates for a heading."""
     s = re.sub(r"[^\w\- ]", "", title.strip().lower())
@@ -156,11 +161,11 @@ def summary(e, cfg):
     names = {s["id"]: s["name"] for s in cfg["sections"]}
     return "\n".join([
         "| Field | Value |", "|---|---|",
-        f"| Name | {md(e['name'])} |",
-        f"| URL | {md(e['url'])} |",
-        f"| Section | {md(names.get(e['section'], e['section']))} |",
-        f"| Description | {md(e['description'])} |",
-        f"| Owner | {md(e['owner']) or '—'} |",
+        f"| Name | {quiet(e['name'])} |",
+        f"| URL | {quiet(e['url'])} |",
+        f"| Section | {quiet(names.get(e['section'], e['section']))} |",
+        f"| Description | {quiet(e['description'])} |",
+        f"| Owner | {quiet(e['owner']) or '—'} |",
     ])
 
 
@@ -201,7 +206,7 @@ def cmd_publish(a):
     save_entries(entries)
     generate(cfg, entries)
     if a.report:
-        write(a.report, f"### 🚀 Published\n\n**{md(e['name'])}** is now in the "
+        write(a.report, f"### 🚀 Published\n\n**{quiet(e['name'])}** is now in the "
                         f"[index](../blob/HEAD/{cfg['output']}). Approved by @{a.approver}.\n")
     print(f"Published: {e['name']} ({e['url']})")
     return 0

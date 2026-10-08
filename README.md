@@ -29,7 +29,7 @@ indexor.config.json           Title, sections, allowed hosts, approvers
 data/entries.json             Source of truth for the index
 INDEX.md                      Published index (generated, do not edit by hand)
 tools/indexor                 CLI (python3, no dependencies)
-tools/site/                   Assets for the GitHub Pages site
+tools/site/                   The GitHub Pages site (HTML, CSS, JS)
 .github/ISSUE_TEMPLATE/       Submission form (generated from the config)
 .github/workflows/            Validation, publishing, lint and site
 ```
@@ -65,6 +65,23 @@ says so on the issue.
 > that requires pull requests on `main` blocks that push, so the control here
 > is the approver check, not the ruleset. Anyone with write access can still
 > edit the files by hand; opening issues does not require it.
+
+## Dependencies and security
+
+- **No packages to install.** The CLI is one Python file using only the
+  standard library; the site is plain HTML, CSS and JavaScript with no
+  libraries, no fonts or scripts from other domains, and no build step.
+- **The only external code** is four official GitHub Actions (`checkout`,
+  `configure-pages`, `upload-pages-artifact`, `deploy-pages`), pinned to
+  commit hashes. Dependabot proposes updates monthly.
+- **Submissions are untrusted input.** Issue content is read from the event
+  file and never interpolated into a shell command. URLs must be `https`,
+  on an allowed host, and point at a repository root; text is escaped
+  before it reaches Markdown, and the site only ever writes it as text.
+- **Least privilege.** Each workflow declares the minimum token permissions,
+  and workflows that do not push do not keep credentials.
+- The site sends a Content-Security-Policy that blocks everything not served
+  from the site itself.
 
 ## CLI
 
