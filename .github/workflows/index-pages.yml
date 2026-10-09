@@ -28,10 +28,10 @@ jobs:
           persist-credentials: false
 
       - name: Validate the index
-        run: tools/indexor lint
+        run: python3 tools/indexor lint
 
       - name: Generate the site
-        run: tools/indexor site _site
+        run: python3 tools/indexor site _site
 
       # Pages must be enabled once by hand: Settings → Pages → Source:
       # GitHub Actions.

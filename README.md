@@ -51,13 +51,14 @@ tools/site/                   The GitHub Pages site (HTML, CSS, JS)
 
 ## Make your own
 
-1. Click **Use this template** (or fork the repository). On a fork, also
+1. Click **Use this template**, fork the repository, or upload a copy of
+   the files (a ZIP download works: nothing depends on file permissions). On a fork, also
    turn on **Issues** in Settings → General and enable workflows in the
    **Actions** tab — both are off by default on forks.
 2. Edit `indexor.config.json`: title, description, sections and hosts.
 3. Delete the files in `data/entries/` if you do not want the existing
    entries.
-4. Run `tools/indexor build` and commit. This regenerates `INDEX.md` and the
+4. Run `python3 tools/indexor build` and commit. This regenerates `INDEX.md` and the
    submission form with your sections.
 5. In **Settings → Actions → General → Workflow permissions**, choose
    **Read and write permissions** and tick **Allow GitHub Actions to create
@@ -104,15 +105,15 @@ Two things to know when writing that ruleset:
 ## CLI
 
 ```bash
-tools/indexor build     # regenerate INDEX.md and the issue forms
-tools/indexor lint      # validate config, entries and generated files
-tools/indexor site      # generate the site in _site/
-tools/indexor add --name "My repo" --url https://github.com/owner/repo \
+python3 tools/indexor build     # regenerate INDEX.md and the issue forms
+python3 tools/indexor lint      # validate config, entries and generated files
+python3 tools/indexor site      # generate the site in _site/
+python3 tools/indexor add --name "My repo" --url https://github.com/owner/repo \
   --section backend --description "What it does"   # manual entry, no issue
 ```
 
 To remove or fix an entry, delete or edit its file in `data/entries/`, run
-`tools/indexor build`, and open a pull request.
+`python3 tools/indexor build`, and open a pull request.
 
 ## License
 
