@@ -262,7 +262,7 @@ class RepositoryTests(unittest.TestCase):
     def test_site_loads_nothing_from_other_domains(self):
         for path in glob.glob(os.path.join(REPO, "tools", "site", "*")):
             text = read(path)
-            for tag in re.findall(r"<(?:script|link|img)[^>]*>", text):
+            for tag in re.findall(r"<(?:script|link|img)[^>]*>", text, flags=re.IGNORECASE):
                 self.assertNotRegex(tag, r"(src|href)=[\"']?(https?:)?//", os.path.basename(path))
             self.assertNotRegex(text, r"@import|url\(\s*[\"']?https?:", os.path.basename(path))
 
