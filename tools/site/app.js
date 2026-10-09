@@ -17,9 +17,9 @@ const marked = (text, term) => {
   return out;
 };
 
-// GitHub Pages lets browsers reuse files for 10 minutes; revalidate the data
-// on every visit so new entries show up as soon as they are deployed.
-fetch("index.json", { cache: "no-cache" }).then(r => r.json()).then(d => {
+// GitHub Pages lets browsers reuse files for 10 minutes. The data is never
+// reused: every visit downloads it again, so the index is never stale.
+fetch("index.json", { cache: "no-store" }).then(r => r.json()).then(d => {
   document.title = d.title;
   $("title").textContent = d.title;
   $("description").textContent = d.description;

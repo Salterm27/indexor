@@ -259,9 +259,9 @@ class RepositoryTests(unittest.TestCase):
                 if not ref.startswith("./"):
                     self.assertRegex(ref, r"@[0-9a-f]{40}$", os.path.basename(path))
 
-    def test_site_always_revalidates_its_data(self):
+    def test_site_never_reuses_a_cached_copy_of_its_data(self):
         # Regression: a cached index.json hid newly published entries.
-        self.assertIn('fetch("index.json", { cache: "no-cache" })', read(os.path.join(REPO, "tools", "site", "app.js")))
+        self.assertIn('fetch("index.json", { cache: "no-store" })', read(os.path.join(REPO, "tools", "site", "app.js")))
 
     def test_site_loads_nothing_from_other_domains(self):
         for path in glob.glob(os.path.join(REPO, "tools", "site", "*")):
