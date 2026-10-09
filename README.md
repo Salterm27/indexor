@@ -45,6 +45,7 @@ data/entries/                 Source of truth: one JSON file per entry
 INDEX.md                      Published index (generated, do not edit by hand)
 tools/indexor                 CLI (python3, no dependencies)
 tools/site/                   The GitHub Pages site (HTML, CSS, JS)
+tests/                        Tests for the CLI and the workflows
 .github/ISSUE_TEMPLATE/       Submission and removal forms (generated)
 .github/workflows/            Submissions, lint and site
 ```
@@ -111,6 +112,17 @@ python3 tools/indexor site      # generate the site in _site/
 python3 tools/indexor add --name "My repo" --url https://github.com/owner/repo \
   --section backend --description "What it does"   # manual entry, no issue
 ```
+
+The tests need nothing installed either:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+They cover validation, escaping of hostile text, both request types and the
+generated files, and they check that the workflows keep their actions
+pinned and never put issue text into a command. Run them after you
+customise anything; the lint workflow runs them on every pull request.
 
 To remove or fix an entry, delete or edit its file in `data/entries/`, run
 `python3 tools/indexor build`, and open a pull request.

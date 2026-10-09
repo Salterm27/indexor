@@ -415,7 +415,10 @@ def cmd_lint(a):
                    for x in validate_entry(e, cfg, entries[:i])]
     if not errors:
         for path, expected in generated_files(cfg, entries).items():
-            actual = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+            actual = ""
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    actual = f.read()
             if actual != expected:
                 errors.append(f"{os.path.relpath(path, ROOT)} is out of date: run `python3 tools/indexor build`.")
     for x in errors:
