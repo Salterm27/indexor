@@ -17,7 +17,9 @@ const marked = (text, term) => {
   return out;
 };
 
-fetch("index.json").then(r => r.json()).then(d => {
+// GitHub Pages lets browsers reuse files for 10 minutes; revalidate the data
+// on every visit so new entries show up as soon as they are deployed.
+fetch("index.json", { cache: "no-cache" }).then(r => r.json()).then(d => {
   document.title = d.title;
   $("title").textContent = d.title;
   $("description").textContent = d.description;
